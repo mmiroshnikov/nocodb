@@ -37,10 +37,12 @@ export function sanitizeEmail(email: string): string {
  * Normalize an email address to its canonical form to prevent alias abuse.
  *
  * - Strips invisible/zero-width characters and whitespace
- * - Strips plus addressing (`user+tag@` → `user@`) for all providers
  * - Removes dots from the local part for Gmail/Googlemail
  * - Normalizes `googlemail.com` → `gmail.com`
  * - Lowercases the entire address
+ *
+ * Plus addressing (`user+tag@`) is preserved so tagged addresses can be
+ * distinct users (e.g. `user+psdg@gmail.com` ≠ `user@gmail.com`).
  */
 export function normalizeEmail(email: string): string {
   email = sanitizeEmail(email);
@@ -50,12 +52,6 @@ export function normalizeEmail(email: string): string {
 
   let localPart = email.substring(0, atIndex).toLowerCase();
   let domain = email.substring(atIndex + 1).toLowerCase();
-
-  // Strip plus addressing (user+tag → user)
-  const plusIndex = localPart.indexOf('+');
-  if (plusIndex !== -1) {
-    localPart = localPart.substring(0, plusIndex);
-  }
 
   // Gmail/Googlemail: dots in local part are insignificant
   if (GMAIL_DOMAINS.includes(domain)) {

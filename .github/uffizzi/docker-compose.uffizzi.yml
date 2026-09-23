@@ -3,7 +3,7 @@ version: '3'
 x-uffizzi:
   ingress:
     service: nocodb
-    port: 8080
+    port: 8088
 
 services:
   postgres:
@@ -30,7 +30,7 @@ services:
   nocodb:
     image: "${NOCODB_IMAGE}"
     ports:
-      - "8080:8080"
+      - "8088:8088"
     entrypoint: /bin/sh
     command: ["-c", "apk add wait4ports && wait4ports tcp://localhost:5432 && /usr/src/appEntry/start.sh"]
     environment:
