@@ -69,6 +69,35 @@ import * as nc_202605180000_table_syncs from './v0/nc_202605180000_table_syncs';
 import * as nc_202605200000_table_sync_column_mappings from './v0/nc_202605200000_table_sync_column_mappings';
 import * as nc_202606021300_doc_yjs_state from './v0/nc_202606021300_doc_yjs_state';
 import * as nc_202606040000_soft_delete_syncs from './v0/nc_202606040000_soft_delete_syncs';
+import * as nc_202606091200_addons from './v0/nc_202606091200_addons';
+import * as nc_202606121400_detach_suspended_sync_mappings from './v0/nc_202606121400_detach_suspended_sync_mappings';
+import * as nc_202606161200_add_enabled_to_sort from './v0/nc_202606161200_add_enabled_to_sort';
+import * as nc_202606180000_form_view_email_text from './v0/nc_202606180000_form_view_email_text';
+import * as nc_202606181200_add_group_by_enabled_to_gantt from './v0/nc_202606181200_add_group_by_enabled_to_gantt';
+import * as nc_202606191200_sandbox_production_readiness from './v0/nc_202606191200_sandbox_production_readiness';
+import * as nc_202606230001_chat_created_files from './v0/nc_202606230001_chat_created_files';
+import * as nc_202606240001_chat_ui_context_record from './v0/nc_202606240001_chat_ui_context_record';
+import * as nc_202606251200_form_save_draft_to_browser from './v0/nc_202606251200_form_save_draft_to_browser';
+import * as nc_202606260000_plans_license_type from './v0/nc_202606260000_plans_license_type';
+import * as nc_202606260001_dedupe_user_emails from './v0/nc_202606260001_dedupe_user_emails';
+import * as nc_202606271200_hook_comment_config from './v0/nc_202606271200_hook_comment_config';
+import * as nc_202606290001_sort_lookup_col from './v0/nc_202606290001_sort_lookup_col';
+import * as nc_202607030001_ltar_order_columns from './v0/nc_202607030001_ltar_order_columns';
+import * as nc_202607071200_comment_attachments from './v0/nc_202607071200_comment_attachments';
+import * as nc_202607090505_snapshot_schedule from './v0/nc_202607090505_snapshot_schedule';
+import * as nc_202607091000_comments_meta from './v0/nc_202607091000_comments_meta';
+import * as nc_202607251200_interfaces from './v0/nc_202607251200_interfaces';
+import * as nc_202607271818_composite_pk_missing_tables_2 from './v0/nc_202607271818_composite_pk_missing_tables_2';
+import * as nc_202607281200_snapshot_schedule_daily_floor from './v0/nc_202607281200_snapshot_schedule_daily_floor';
+import * as nc_202607121506_credit_system from './v0/nc_202607121506_credit_system';
+import * as nc_202608071500_ai_col_global_model_reset from './v0/nc_202608071500_ai_col_global_model_reset';
+import * as nc_202608121200_base_sections from './v0/nc_202608121200_base_sections';
+import * as nc_202608191200_credit_hold_ref_scoped from './v0/nc_202608191200_credit_hold_ref_scoped';
+import * as nc_202608201200_automation_sections from './v0/nc_202608201200_automation_sections';
+import * as nc_202608211200_widen_entity_id_columns from './v0/nc_202608211200_widen_entity_id_columns';
+import * as nc_202608281200_comment_notification_pref_index from './v0/nc_202608281200_comment_notification_pref_index';
+import * as nc_202609021200_admin_suspend from './v0/nc_202609021200_admin_suspend';
+import * as nc_202609031200_agents from './v0/nc_202609031200_agents';
 
 // Create a custom migration source class
 export default class XcMigrationSourcev0 {
@@ -149,6 +178,35 @@ export default class XcMigrationSourcev0 {
       'nc_202605200000_table_sync_column_mappings',
       'nc_202606021300_doc_yjs_state',
       'nc_202606040000_soft_delete_syncs',
+      'nc_202606091200_addons',
+      'nc_202606121400_detach_suspended_sync_mappings',
+      'nc_202606161200_add_enabled_to_sort',
+      'nc_202606180000_form_view_email_text',
+      'nc_202606181200_add_group_by_enabled_to_gantt',
+      'nc_202606191200_sandbox_production_readiness',
+      'nc_202606230001_chat_created_files',
+      'nc_202606240001_chat_ui_context_record',
+      'nc_202606251200_form_save_draft_to_browser',
+      'nc_202606260000_plans_license_type',
+      'nc_202606260001_dedupe_user_emails',
+      'nc_202606271200_hook_comment_config',
+      'nc_202606290001_sort_lookup_col',
+      'nc_202607030001_ltar_order_columns',
+      'nc_202607071200_comment_attachments',
+      'nc_202607090505_snapshot_schedule',
+      'nc_202607091000_comments_meta',
+      'nc_202607251200_interfaces',
+      'nc_202607271818_composite_pk_missing_tables_2',
+      'nc_202607281200_snapshot_schedule_daily_floor',
+      'nc_202607121506_credit_system',
+      'nc_202608071500_ai_col_global_model_reset',
+      'nc_202608121200_base_sections',
+      'nc_202608191200_credit_hold_ref_scoped',
+      'nc_202608201200_automation_sections',
+      'nc_202608211200_widen_entity_id_columns',
+      'nc_202608281200_comment_notification_pref_index',
+      'nc_202609021200_admin_suspend',
+      'nc_202609031200_agents',
     ]);
   }
 
@@ -300,6 +358,65 @@ export default class XcMigrationSourcev0 {
         return nc_202606021300_doc_yjs_state;
       case 'nc_202606040000_soft_delete_syncs':
         return nc_202606040000_soft_delete_syncs;
+      case 'nc_202606091200_addons':
+        return nc_202606091200_addons;
+      case 'nc_202606121400_detach_suspended_sync_mappings':
+        return nc_202606121400_detach_suspended_sync_mappings;
+      case 'nc_202606161200_add_enabled_to_sort':
+        return nc_202606161200_add_enabled_to_sort;
+      case 'nc_202606180000_form_view_email_text':
+        return nc_202606180000_form_view_email_text;
+      case 'nc_202606181200_add_group_by_enabled_to_gantt':
+        return nc_202606181200_add_group_by_enabled_to_gantt;
+      case 'nc_202606191200_sandbox_production_readiness':
+        return nc_202606191200_sandbox_production_readiness;
+      case 'nc_202606230001_chat_created_files':
+        return nc_202606230001_chat_created_files;
+      case 'nc_202606240001_chat_ui_context_record':
+        return nc_202606240001_chat_ui_context_record;
+      case 'nc_202606251200_form_save_draft_to_browser':
+        return nc_202606251200_form_save_draft_to_browser;
+      case 'nc_202606260000_plans_license_type':
+        return nc_202606260000_plans_license_type;
+      case 'nc_202606260001_dedupe_user_emails':
+        return nc_202606260001_dedupe_user_emails;
+      case 'nc_202606271200_hook_comment_config':
+        return nc_202606271200_hook_comment_config;
+      case 'nc_202606290001_sort_lookup_col':
+        return nc_202606290001_sort_lookup_col;
+      case 'nc_202607030001_ltar_order_columns':
+        return nc_202607030001_ltar_order_columns;
+      case 'nc_202607071200_comment_attachments':
+        return nc_202607071200_comment_attachments;
+      case 'nc_202607090505_snapshot_schedule':
+        return nc_202607090505_snapshot_schedule;
+      case 'nc_202607091000_comments_meta':
+        return nc_202607091000_comments_meta;
+      case 'nc_202607251200_interfaces':
+        return nc_202607251200_interfaces;
+      case 'nc_202607271818_composite_pk_missing_tables_2':
+        return nc_202607271818_composite_pk_missing_tables_2;
+      case 'nc_202607281200_snapshot_schedule_daily_floor':
+        return nc_202607281200_snapshot_schedule_daily_floor;
+      case 'nc_202607121506_credit_system':
+        return nc_202607121506_credit_system;
+      case 'nc_202608071500_ai_col_global_model_reset':
+        return nc_202608071500_ai_col_global_model_reset;
+      case 'nc_202608121200_base_sections':
+        return nc_202608121200_base_sections;
+      case 'nc_202608191200_credit_hold_ref_scoped':
+        return nc_202608191200_credit_hold_ref_scoped;
+      case 'nc_202608201200_automation_sections':
+        return nc_202608201200_automation_sections;
+      case 'nc_202608211200_widen_entity_id_columns':
+        return nc_202608211200_widen_entity_id_columns;
+      case 'nc_202608281200_comment_notification_pref_index':
+        return nc_202608281200_comment_notification_pref_index;
+      case 'nc_202609021200_admin_suspend':
+        return nc_202609021200_admin_suspend;
+      case 'nc_202609031200_agents':
+        return nc_202609031200_agents;
+
     }
   }
 }

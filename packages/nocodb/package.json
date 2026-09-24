@@ -32,7 +32,9 @@
     "watch:run": "cross-env NODE_ENV=development NC_DISABLE_TELE=true ENTRYPOINT=src/run/docker rspack --config rspack.dev.config.js",
     "watch:run:mysql": "cross-env NODE_ENV=development NC_DISABLE_TELE=true ENTRYPOINT=src/run/dockerRunMysql rspack --config rspack.dev.config.js",
     "watch:run:pg": "cross-env NODE_ENV=development NC_DISABLE_TELE=true ENTRYPOINT=src/run/dockerRunPG rspack --config rspack.dev.config.js",
-    "mail": "email dev --dir src/services/mail/templates --port 8001"
+    "mail": "email dev --dir src/services/mail/templates --port 8001",
+    "docker:build": "EE=\"true-xc-test\" rspack --config docker/rspack.config.js",
+    "build": "pnpm run docker:build"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.3",

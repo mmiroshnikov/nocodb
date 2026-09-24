@@ -1,0 +1,4 @@
+# Overlay our forked backend onto the official image.
+# Frontend stays from upstream; backend comes from this fork.
+FROM nocodb/nocodb:latest
+COPY docker/main.js /usr/src/app/docker/index.js

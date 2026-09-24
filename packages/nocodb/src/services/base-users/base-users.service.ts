@@ -125,8 +125,11 @@ export class BaseUsersService {
     }
 
     for (const email of emails) {
-      // add user to base if user already exist (canonical lookup handles alias variants)
-      const user = await User.getByCanonicalEmail(email, ncMeta);
+      // Prefer exact email match so plus-aliases stay distinct users.
+      // Fall back to canonical only when no exact row exists.
+      const user =
+        (await User.getByEmail(email, ncMeta)) ||
+        (await User.getByCanonicalEmail(email, ncMeta));
 
       const base = await Base.get(context, param.baseId, ncMeta);
 

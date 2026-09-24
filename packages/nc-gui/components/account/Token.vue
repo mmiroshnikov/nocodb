@@ -33,7 +33,7 @@ const pagination = reactive({
 const isLoadingAllTokens = ref(true)
 const isModalOpen = ref(false)
 const tokenDesc = ref('')
-const tokenToCopy = ref('')
+const tokenIdToDelete = ref('')
 
 const loadAllTokens = async (limit = pagination.total) => {
   try {
@@ -79,7 +79,17 @@ const loadTokens = async (page = currentPage.value, limit = currentLimit.value) 
 
 loadTokens()
 
-const hideOrShowToken = (tokenId: string) => {
+const maskedToken = (el: IApiTokenInfo) => {
+  if (el.token) return el.token
+  if (el.token_prefix) return `${el.token_prefix}${'*'.repeat(28)}`
+  return '************************************'
+}
+
+const hideOrShowToken = (tokenId: string, hasRevealableToken: boolean) => {
+  if (!hasRevealableToken) {
+    message.info('Token is only shown once when created. Create a new token if you need to copy it again.')
+    return
+  }
   if (selectedToken.isShow && selectedToken.id === tokenId) {
     selectedToken.isShow = false
     selectedToken.id = ''
@@ -89,15 +99,13 @@ const hideOrShowToken = (tokenId: string) => {
   }
 }
 
-const deleteToken = async (token: string): Promise<void> => {
+const deleteToken = async (tokenId: string): Promise<void> => {
   try {
-    const tokenInfo = allTokens.value.find((t) => t.token === token)
-    const id = tokenInfo?.id
-    if (id) {
-      await api.orgTokens.delete(id)
+    if (tokenId) {
+      await api.orgTokens.delete(tokenId)
     }
 
-    allTokens.value = allTokens.value.filter((t) => t.token !== token)
+    allTokens.value = allTokens.value.filter((t) => t.id !== tokenId)
 
     const newTotal = pagination.total - 1
     if (currentPage.value > 1 && (currentPage.value - 1) * currentLimit.value >= newTotal) {
@@ -110,12 +118,15 @@ const deleteToken = async (token: string): Promise<void> => {
     message.error(await extractSdkResponseErrorMsg(e))
   }
   isModalOpen.value = false
-  tokenToCopy.value = ''
+  tokenIdToDelete.value = ''
   tokenDesc.value = ''
 }
 
 const copyToken = async (token: string | undefined) => {
-  if (!token) return
+  if (!token) {
+    message.info('Token is only shown once when created. Create a new token if you need to copy it again.')
+    return
+  }
   try {
     await copy(token)
     message.info(t('msg.info.copiedToClipboard'))
@@ -125,8 +136,8 @@ const copyToken = async (token: string | undefined) => {
   }
 }
 
-const triggerDeleteModal = (tokenToDelete: string, tokenDescription: string) => {
-  tokenToCopy.value = tokenToDelete
+const triggerDeleteModal = (tokenId: string, tokenDescription: string) => {
+  tokenIdToDelete.value = tokenId
   tokenDesc.value = tokenDescription
   isModalOpen.value = true
 }
@@ -247,28 +258,36 @@ const onCreateCancel = () => {
                   </NcTooltip>
                 </span>
                 <span class="pl-2 text-nc-content-gray-muted font-medium text-3.5 text-start w-3/9 truncate">
-                  <NcTooltip v-if="el.token === selectedToken.id && selectedToken.isShow" class="truncate" show-on-truncate-only>
+                  <NcTooltip
+                    v-if="el.token && el.id === selectedToken.id && selectedToken.isShow"
+                    class="truncate"
+                    show-on-truncate-only
+                  >
                     <template #title>
                       {{ el.token }}
                     </template>
                     {{ el.token }}
                   </NcTooltip>
-                  <span v-else>************************************</span>
+                  <span v-else>{{ maskedToken(el) }}</span>
                 </span>
                 <div class="flex justify-end items-center gap-3 pr-5 text-nc-content-gray-muted font-medium text-3.5 w-2/9">
                   <NcTooltip placement="top">
-                    <template #title>{{ $t('labels.showOrHide') }}</template>
+                    <template #title>{{
+                      el.token ? $t('labels.showOrHide') : 'Token is only shown once when created'
+                    }}</template>
                     <component
                       :is="iconMap.eye"
                       class="nc-toggle-token-visibility hover::cursor-pointer w-h-4 mb-[1.8px]"
-                      @click="hideOrShowToken(el.token as string)"
+                      :class="{ 'opacity-40': !el.token }"
+                      @click="hideOrShowToken(el.id as string, !!el.token)"
                     />
                   </NcTooltip>
                   <NcTooltip placement="top">
-                    <template #title>{{ $t('general.copy') }}</template>
+                    <template #title>{{ el.token ? $t('general.copy') : 'Token is only shown once when created' }}</template>
                     <component
                       :is="iconMap.copy"
                       class="hover::cursor-pointer w-4 h-4 text-nc-content-gray-subtle2"
+                      :class="{ 'opacity-40': !el.token }"
                       @click="copyToken(el.token)"
                     />
                   </NcTooltip>
@@ -278,7 +297,7 @@ const onCreateCancel = () => {
                       :is="iconMap.delete"
                       data-testid="nc-token-row-action-icon"
                       class="nc-delete-icon hover::cursor-pointer w-4 h-4"
-                      @click="triggerDeleteModal(el.token as string, el.description as string)"
+                      @click="triggerDeleteModal(el.id as string, el.description as string)"
                     />
                   </NcTooltip>
                 </div>
@@ -320,7 +339,7 @@ const onCreateCancel = () => {
       <GeneralDeleteModal
         v-model:visible="isModalOpen"
         :entity-name="$t('labels.token')"
-        :on-delete="() => deleteToken(tokenToCopy)"
+        :on-delete="() => deleteToken(tokenIdToDelete)"
       >
         <template #entity-preview>
           <span>

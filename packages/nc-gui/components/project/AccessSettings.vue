@@ -242,9 +242,12 @@ const updateCollaborator = async (collab: any, roles: ProjectRoles) => {
         currentCollaborator.roles = roles
         await updateProjectUser(currentBase.value.id!, currentCollaborator as unknown as User)
       } else {
+        // Existing users (e.g. workspace members with inherited No Access) already
+        // have an id — assign the base role by id. Invite-by-email would go through
+        // canonical email lookup and can collide on plus-aliases (a+b@ ≈ a@).
         currentCollaborator.roles = roles
         currentCollaborator.base_roles = roles
-        await createProjectUser(currentBase.value.id!, currentCollaborator as unknown as User)
+        await updateProjectUser(currentBase.value.id!, currentCollaborator as unknown as User)
       }
 
       let currentBaseUsers = basesUser.value.get(currentBase.value.id)
