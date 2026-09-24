@@ -26,24 +26,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          # Use the packageManager pin from package.json (pnpm@9.14.4)
+          corepack prepare --activate
+          pnpm -v
 
       - name: Install & build SDK
         run: |
-          pnpm --filter=nocodb-sdk install
+          pnpm --filter=nocodb-sdk install --frozen-lockfile=false
           pnpm --filter=nocodb-sdk run build
 
       - name: Install nocodb package
-        run: pnpm --filter=nocodb install
+        run: pnpm --filter=nocodb install --frozen-lockfile=false
 
       - name: Register integrations
         run: pnpm --filter=nocodb run registerIntegrations
