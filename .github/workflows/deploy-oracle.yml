@@ -1,0 +1,98 @@
+name: Deploy to Oracle
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - 'packages/nocodb/**'
+      - 'packages/nocodb-sdk/**'
+      - 'scripts/deploy-oracle.sh'
+      - 'scripts/oracle-swap.sh'
+      - '.github/workflows/deploy-oracle.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install & build SDK
+        run: |
+          pnpm --filter=nocodb-sdk install
+          pnpm --filter=nocodb-sdk run build
+
+      - name: Install nocodb package
+        run: pnpm --filter=nocodb install
+
+      - name: Register integrations
+        run: pnpm --filter=nocodb run registerIntegrations
+
+      - name: Build backend bundle
+        working-directory: packages/nocodb
+        run: pnpm run docker:build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build CE image
+        working-directory: packages/nocodb
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            -f Dockerfile.ce \
+            -t nocodb-fork:ce \
+            --load \
+            .
+
+      - name: Save image
+        run: |
+          docker save nocodb-fork:ce | gzip > /tmp/nocodb-fork-ce.tar.gz
+          ls -lh /tmp/nocodb-fork-ce.tar.gz
+
+      - name: Prepare SSH
+        env:
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          ORACLE_HOST: ${{ vars.ORACLE_HOST }}
+        run: |
+          test -n "$ORACLE_SSH_PRIVATE_KEY" || { echo "Missing secret ORACLE_SSH_PRIVATE_KEY"; exit 1; }
+          HOST="${ORACLE_HOST:-146.235.233.206}"
+          echo "ORACLE_HOST=$HOST" >> "$GITHUB_ENV"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ORACLE_SSH_PRIVATE_KEY" > ~/.ssh/oci_key
+          chmod 600 ~/.ssh/oci_key
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload image to Oracle
+        run: |
+          scp -i ~/.ssh/oci_key -o StrictHostKeyChecking=yes \
+            /tmp/nocodb-fork-ce.tar.gz \
+            "ubuntu@${ORACLE_HOST}:/tmp/nocodb-fork-ce.tar.gz"
+
+      - name: Swap container on Oracle
+        env:
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+        run: |
+          PUBLIC_URL="${PUBLIC_URL:-https://db.misha.live}"
+          ssh -i ~/.ssh/oci_key -o StrictHostKeyChecking=yes "ubuntu@${ORACLE_HOST}" \
+            "PUBLIC_URL='${PUBLIC_URL}' bash -s" < scripts/oracle-swap.sh
