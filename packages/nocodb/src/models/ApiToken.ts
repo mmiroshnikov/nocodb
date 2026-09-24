@@ -63,14 +63,17 @@ export default class ApiToken implements ApiTokenType {
     });
   }
 
-  // Columns returned by list endpoints — intentionally excludes the raw
-  // `token` secret. The full token is only ever returned at creation time.
+  // Columns returned by list endpoints.
+  // Include `token` so CE GUI (nc-lib-gui ≤0.301.x) can show/copy/delete.
+  // Upstream later moved to "show once at create" + TokenCreateWizard; until we
+  // ship that GUI build, list must still return the secret.
   private static readonly LIST_FIELDS = [
     'id',
     'description',
     'fk_user_id',
     'fk_sso_client_id',
     'base_id',
+    'token',
     'token_prefix',
     'expiry',
     'enabled',
@@ -208,6 +211,7 @@ export default class ApiToken implements ApiTokenType {
         `${MetaTable.API_TOKENS}.fk_user_id`,
         `${MetaTable.API_TOKENS}.fk_sso_client_id`,
         `${MetaTable.API_TOKENS}.base_id`,
+        `${MetaTable.API_TOKENS}.token`,
         `${MetaTable.API_TOKENS}.created_at`,
         `${MetaTable.API_TOKENS}.updated_at`,
         `${MetaTable.API_TOKENS}.token_prefix`,

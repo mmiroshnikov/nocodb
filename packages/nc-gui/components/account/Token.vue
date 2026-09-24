@@ -148,9 +148,20 @@ const openCreateForm = () => {
   navigateTo('/account/tokens/new')
 }
 
-const onTokenCreated = () => {
-  loadTokens()
-  loadAllTokens(pagination.total + 1)
+const onTokenCreated = async (createdToken?: string) => {
+  await loadTokens()
+  await loadAllTokens(pagination.total + 1)
+
+  // Create returns the secret once; list may omit it. Patch newest row so copy works.
+  if (!createdToken) return
+  const newest = tokens.value[0]
+  if (newest && !newest.token) {
+    newest.token = createdToken
+  }
+  const allNewest = allTokens.value.find((t) => t.id === newest?.id)
+  if (allNewest && !allNewest.token) {
+    allNewest.token = createdToken
+  }
 }
 
 const returnToList = () => {
