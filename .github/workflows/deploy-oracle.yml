@@ -96,3 +96,4 @@ jobs:
           PUBLIC_URL="${PUBLIC_URL:-https://db.misha.live}"
           ssh -i ~/.ssh/oci_key -o StrictHostKeyChecking=yes "ubuntu@${ORACLE_HOST}" \
             "PUBLIC_URL='${PUBLIC_URL}' bash -s" < scripts/oracle-swap.sh
+
