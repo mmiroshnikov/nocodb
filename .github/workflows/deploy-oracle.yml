@@ -48,6 +48,15 @@ jobs:
       - name: Register integrations
         run: pnpm --filter=nocodb run registerIntegrations
 
+      # docker/rspack resolves @noco-local-integrations/core via tsconfig paths
+      # to packages/noco-integrations/core (main: dist/) — must be built first.
+      - name: Build integrations core
+        working-directory: packages/noco-integrations
+        run: |
+          pnpm install --frozen-lockfile=false
+          pnpm --filter=@noco-integrations/core run build
+          test -s core/dist/index.js
+
       - name: Build backend bundle
         working-directory: packages/nocodb
         run: |

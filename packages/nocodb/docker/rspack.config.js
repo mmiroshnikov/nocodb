@@ -49,6 +49,17 @@ module.exports = {
         tsConfig: {
             configFile: path.resolve('tsconfig.json'),
         },
+        alias: {
+            // __dirname is packages/nocodb/docker — go up to packages/
+            '@noco-local-integrations/core': path.resolve(
+                __dirname,
+                '../../noco-integrations/core',
+            ),
+            '@noco-local-integrations': path.resolve(
+                __dirname,
+                '../../noco-integrations/packages',
+            ),
+        },
     },
     output: {
         path: path.resolve('./docker'),
