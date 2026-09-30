@@ -68,6 +68,9 @@ deploy() {
   node -v
   pnpm -v
 
+  echo "==> Build frontend"
+  "$ROOT/scripts/build-gui-for-docker.sh"
+
   echo "==> Build backend bundle"
   cd "$ROOT/packages/nocodb"
   pnpm run docker:build

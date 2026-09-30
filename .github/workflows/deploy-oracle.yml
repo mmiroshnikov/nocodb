@@ -4,10 +4,12 @@ on:
   push:
     branches: [develop, main]
     paths:
+      - 'packages/nc-gui/**'
       - 'packages/nocodb/**'
       - 'packages/nocodb-sdk/**'
       - 'scripts/deploy-oracle.sh'
       - 'scripts/oracle-swap.sh'
+      - 'scripts/build-gui-for-docker.sh'
       - '.github/workflows/deploy-oracle.yml'
   workflow_dispatch:
 
@@ -56,6 +58,9 @@ jobs:
           pnpm install --frozen-lockfile=false
           pnpm --filter=@noco-integrations/core run build
           test -s core/dist/index.js
+
+      - name: Build frontend
+        run: ./scripts/build-gui-for-docker.sh
 
       - name: Build backend bundle
         working-directory: packages/nocodb

@@ -30,6 +30,9 @@ nvm use 22 >/dev/null 2>&1 || true
 node -v
 pnpm -v
 
+echo "==> Build frontend"
+"$ROOT/scripts/build-gui-for-docker.sh"
+
 echo "==> Build backend bundle"
 cd "$ROOT/packages/nocodb"
 pnpm run docker:build
