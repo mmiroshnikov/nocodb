@@ -124,3 +124,6 @@ antd.variable.css
 .nc-dev-proxy.pid
 .nc-dev-proxy.log
 .nc-dev-logs/
+
+# Local pnpm store — never commit (GitHub 100MB limit)
+.pnpm-store/
