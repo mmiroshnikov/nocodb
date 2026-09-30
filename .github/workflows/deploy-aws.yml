@@ -1,0 +1,109 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - 'packages/nocodb/**'
+      - 'packages/nocodb-sdk/**'
+      - 'packages/noco-integrations/**'
+      - 'scripts/deploy-aws.sh'
+      - 'scripts/aws-swap.sh'
+      - '.github/workflows/deploy-aws.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare --activate
+          pnpm -v
+
+      - name: Install workspace dependencies
+        run: |
+          pnpm install --frozen-lockfile=false
+
+      - name: Build SDK
+        run: pnpm --filter=nocodb-sdk run build
+
+      - name: Register integrations
+        run: pnpm --filter=nocodb run registerIntegrations
+
+      - name: Build integrations core
+        working-directory: packages/noco-integrations
+        run: |
+          pnpm install --frozen-lockfile=false
+          pnpm --filter=@noco-integrations/core run build
+          test -s core/dist/index.js
+
+      - name: Build backend bundle
+        working-directory: packages/nocodb
+        run: |
+          pnpm run docker:build
+          test -s docker/main.js
+          ls -lh docker/main.js
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build CE image
+        working-directory: packages/nocodb
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            -f Dockerfile.ce \
+            -t nocodb-ce:develop \
+            --load \
+            .
+
+      - name: Save image
+        run: |
+          docker save nocodb-ce:develop | gzip > /tmp/nocodb-ce.tar.gz
+          ls -lh /tmp/nocodb-ce.tar.gz
+
+      - name: Prepare SSH
+        env:
+          AWS_SSH_PRIVATE_KEY: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
+          AWS_HOST: ${{ vars.AWS_HOST }}
+        run: |
+          test -n "$AWS_SSH_PRIVATE_KEY" || { echo "Missing secret AWS_SSH_PRIVATE_KEY"; exit 1; }
+          HOST="${AWS_HOST:-44.212.220.187}"
+          echo "AWS_HOST=$HOST" >> "$GITHUB_ENV"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AWS_SSH_PRIVATE_KEY" > ~/.ssh/aws_nocodb_ce
+          chmod 600 ~/.ssh/aws_nocodb_ce
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload image to AWS
+        run: |
+          scp -i ~/.ssh/aws_nocodb_ce -o StrictHostKeyChecking=yes \
+            /tmp/nocodb-ce.tar.gz \
+            "ubuntu@${AWS_HOST}:/tmp/nocodb-ce.tar.gz"
+
+      - name: Swap only nocodb-ce
+        env:
+          AWS_PUBLIC_URL: ${{ vars.AWS_PUBLIC_URL }}
+        run: |
+          PUBLIC_URL="${AWS_PUBLIC_URL:-http://${AWS_HOST}}"
+          ssh -i ~/.ssh/aws_nocodb_ce -o StrictHostKeyChecking=yes "ubuntu@${AWS_HOST}" \
+            "PUBLIC_URL='${PUBLIC_URL}' IMAGE_TAG='nocodb-ce:develop' bash -s" \
+            < scripts/aws-swap.sh
