@@ -3,7 +3,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { extractRolesObj, NcApiVersion, ProjectRoles } from 'nocodb-sdk';
-import type { NcContext, NcRequest, UserType } from 'nocodb-sdk';
+import type {
+  FieldV3Type,
+  NcContext,
+  NcRequest,
+  UserType,
+} from 'nocodb-sdk';
 import type { Request, Response } from 'express';
 import type {
   DataDeleteRequest,
@@ -15,6 +20,7 @@ import Noco from '~/Noco';
 import { MetaTable } from '~/utils/globals';
 import { BasesV3Service } from '~/services/v3/bases-v3.service';
 import { TablesV3Service } from '~/services/v3/tables-v3.service';
+import { ColumnsV3Service } from '~/services/v3/columns-v3.service';
 import { DataV3Service } from '~/services/v3/data-v3.service';
 import { DataTableService } from '~/services/data-table.service';
 import { hasMinimumRole } from '~/utils/roleHelper';
@@ -24,11 +30,140 @@ import { AuditsService } from '~/services/audits.service';
 import { isEE } from '~/utils';
 import { aggregationDescription, whereDescription } from '~/mcp/descriptions';
 
+const mcpSelectChoiceSchema = z.object({
+  title: z.string().describe('Choice title'),
+  color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/)
+    .optional()
+    .describe(
+      'Optional tile color as #RRGGBB. Assigned automatically when omitted.',
+    ),
+});
+
+const mcpFieldSchema = z.object({
+  title: z.string().describe('Column title'),
+  type: z
+    .enum([
+      'SingleLineText',
+      'LongText',
+      'PhoneNumber',
+      'URL',
+      'Email',
+      'Number',
+      'Decimal',
+      'Currency',
+      'Percent',
+      'Duration',
+      'Date',
+      'DateTime',
+      'Time',
+      'Year',
+      'SingleSelect',
+      'MultiSelect',
+      'Rating',
+      'Checkbox',
+      'Attachment',
+      'JSON',
+      'User',
+    ])
+    .describe('Column type'),
+  description: z.string().optional().describe('Column description'),
+  default_value: z
+    .union([z.string(), z.number(), z.boolean()])
+    .optional()
+    .describe('Default value, when the column type supports one'),
+  options: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe(
+      'Type-specific options. SingleSelect/MultiSelect: { choices: [{ title, color? }] }. Checkbox/Rating: { icon?, color? }. Date/DateTime: { date_format? }. Currency: { currency_code?, currency_locale? }. User: { allow_multiple_users? }.',
+    ),
+});
+
+type McpFieldInput = z.infer<typeof mcpFieldSchema>;
+
+function toFieldV3(field: McpFieldInput): FieldV3Type {
+  const next: Record<string, unknown> = {
+    title: field.title,
+    type: field.type,
+  };
+  if (field.description !== undefined) next.description = field.description;
+  if (field.default_value !== undefined) next.default_value = field.default_value;
+
+  if (field.type === 'SingleSelect' || field.type === 'MultiSelect') {
+    const options = { ...(field.options ?? {}) };
+    if (options.choices == null) {
+      options.choices = [];
+    } else if (!Array.isArray(options.choices)) {
+      throw new Error(
+        'SingleSelect and MultiSelect options.choices must be an array of { title, color? }',
+      );
+    }
+    next.options = options;
+  } else if (field.options) {
+    next.options = field.options;
+  }
+
+  return next as FieldV3Type;
+}
+
+function mergeSelectChoices(
+  existing: { id?: string; title?: string; color?: string }[],
+  incoming: { title: string; color?: string }[],
+) {
+  const seen = new Set(
+    existing
+      .map((choice) => choice.title?.trim())
+      .filter((title): title is string => !!title),
+  );
+  const added: string[] = [];
+  const skipped: string[] = [];
+  const choices = existing
+    .filter((choice) => choice.title)
+    .map((choice) => ({
+      ...(choice.id ? { id: choice.id } : {}),
+      title: choice.title as string,
+      ...(choice.color && /^#[0-9A-Fa-f]{6}$/.test(choice.color)
+        ? { color: choice.color }
+        : {}),
+    }));
+
+  for (const choice of incoming) {
+    const title = choice.title.trim();
+    if (!title) {
+      throw new Error('Choice title cannot be empty');
+    }
+    if (seen.has(title)) {
+      skipped.push(title);
+      continue;
+    }
+    seen.add(title);
+    added.push(title);
+    choices.push({
+      title,
+      ...(choice.color ? { color: choice.color } : {}),
+    });
+  }
+
+  return { choices, added, skipped };
+}
+
+function mcpErrorResult(error: { message?: string } | string) {
+  const message =
+    typeof error === 'string' ? error : error?.message || 'Unknown error';
+  return {
+    content: [{ type: 'text' as const, text: `Error: ${message}` }],
+    isError: true as const,
+  };
+}
+
 @Injectable()
 export class McpService {
   constructor(
     protected readonly baseV3Service: BasesV3Service,
     protected readonly tablesV3Service: TablesV3Service,
+    protected readonly columnsV3Service: ColumnsV3Service,
     protected readonly datasV3Service: DataV3Service,
     protected readonly dataTableService: DataTableService,
     protected readonly auditService: AuditsService,
@@ -74,6 +209,7 @@ export class McpService {
     req: NcRequest;
   }) {
     const isEditorPlus = hasMinimumRole(user, ProjectRoles.EDITOR);
+    const isCreatorPlus = hasMinimumRole(user, ProjectRoles.CREATOR);
 
     // Base Details
     server.registerTool(
@@ -749,6 +885,267 @@ export class McpService {
               content: [{ type: 'text', text: `Error: ${error.message}` }],
               isError: true,
             };
+          }
+        },
+      );
+    }
+
+    if (isCreatorPlus) {
+      server.registerTool(
+        'createTable',
+        {
+          title: 'Create Table',
+          description:
+            'Create a table in the current base. Id, CreatedAt, UpdatedAt, and other system columns are added automatically — there is no default Title column, so pass the columns you need in fields. For SingleSelect and MultiSelect set options.choices to [{ title, color? }]. color is an optional #RRGGBB hex code; omitted colors are assigned automatically.',
+          inputSchema: {
+            title: z.string().describe('Table title'),
+            description: z
+              .string()
+              .optional()
+              .describe('Table description'),
+            sourceId: z
+              .string()
+              .optional()
+              .describe(
+                'Data source id. Omit to use the base default source.',
+              ),
+            fields: z
+              .array(mcpFieldSchema)
+              .optional()
+              .describe('Columns to create with the table'),
+          },
+        },
+        async ({ title, description, sourceId, fields }) => {
+          try {
+            const created = await this.tablesV3Service.tableCreate(context, {
+              baseId: context.base_id,
+              sourceId,
+              table: {
+                title,
+                ...(description !== undefined ? { description } : {}),
+                ...(sourceId ? { source_id: sourceId } : {}),
+                ...(fields?.length
+                  ? { fields: fields.map((field) => toFieldV3(field)) }
+                  : {}),
+              },
+              user,
+              req,
+            });
+
+            const describedFields = (fields ?? []).filter(
+              (field) => field.description,
+            );
+            const warnings: string[] = [];
+            if (describedFields.length && created?.id) {
+              for (const field of describedFields) {
+                const match = created.fields?.find(
+                  (item) => item.title === field.title,
+                );
+                if (!match?.id) {
+                  warnings.push(
+                    `Could not find column "${field.title}" to save its description`,
+                  );
+                  continue;
+                }
+                try {
+                  await this.columnsV3Service.columnUpdate(context, {
+                    req,
+                    columnId: match.id,
+                    column: { description: field.description },
+                    user,
+                  });
+                } catch (error) {
+                  warnings.push(
+                    `${field.title}: ${error?.message || error}`,
+                  );
+                }
+              }
+            }
+
+            const table =
+              describedFields.length && created?.id
+                ? await this.tablesV3Service.getTableWithAccessibleViews(
+                    context,
+                    { tableId: created.id, user },
+                  )
+                : created;
+
+            return {
+              content: [
+                ...(warnings.length
+                  ? [
+                      {
+                        type: 'text' as const,
+                        text: `Column descriptions not saved: ${warnings.join('; ')}`,
+                      },
+                    ]
+                  : []),
+                { type: 'text' as const, text: JSON.stringify(table, null, 2) },
+              ],
+            };
+          } catch (error) {
+            return mcpErrorResult(error);
+          }
+        },
+      );
+
+      server.registerTool(
+        'createColumn',
+        {
+          title: 'Create Column',
+          description:
+            'Add a column to an existing table. For SingleSelect and MultiSelect set options.choices to [{ title, color? }]. color is an optional #RRGGBB hex code; omitted colors are assigned automatically. Use getTableSchema to find the table id.',
+          inputSchema: {
+            tableId: z.string().describe('Table id'),
+            field: mcpFieldSchema.describe('Column to create'),
+          },
+        },
+        async ({ tableId, field }) => {
+          try {
+            const created = await this.columnsV3Service.columnAdd(context, {
+              req,
+              tableId,
+              column: toFieldV3(field),
+              user,
+            });
+
+            if (!field.description) {
+              return {
+                content: [
+                  { type: 'text', text: JSON.stringify(created, null, 2) },
+                ],
+              };
+            }
+
+            try {
+              const updated = await this.columnsV3Service.columnUpdate(
+                context,
+                {
+                  req,
+                  columnId: created.id,
+                  column: { description: field.description },
+                  user,
+                },
+              );
+              return {
+                content: [
+                  { type: 'text', text: JSON.stringify(updated, null, 2) },
+                ],
+              };
+            } catch (error) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `Column created, but description was not saved: ${
+                      error?.message || error
+                    }`,
+                  },
+                  { type: 'text', text: JSON.stringify(created, null, 2) },
+                ],
+              };
+            }
+          } catch (error) {
+            return mcpErrorResult(error);
+          }
+        },
+      );
+
+      server.registerTool(
+        'addSelectOptions',
+        {
+          title: 'Add Select Options',
+          description:
+            'Append choices to an existing SingleSelect or MultiSelect column. Existing choices are kept. A choice is skipped when its title already exists. This does not rename or remove choices. Use getTableSchema to find the column id (fields[].id).',
+          annotations: {
+            idempotentHint: true,
+          },
+          inputSchema: {
+            columnId: z.string().describe('SingleSelect or MultiSelect column id'),
+            choices: z
+              .array(mcpSelectChoiceSchema)
+              .min(1)
+              .describe('Choices to append'),
+          },
+        },
+        async ({ columnId, choices }) => {
+          try {
+            const column = (await this.columnsV3Service.columnGet(context, {
+              columnId,
+            })) as {
+              id?: string;
+              title?: string;
+              type?: string;
+              options?: {
+                choices?: { id?: string; title?: string; color?: string }[];
+              };
+            };
+
+            if (
+              column?.type !== 'SingleSelect' &&
+              column?.type !== 'MultiSelect'
+            ) {
+              return mcpErrorResult(
+                new Error(
+                  `Column "${column?.title || columnId}" is ${
+                    column?.type || 'unknown'
+                  }, not SingleSelect or MultiSelect`,
+                ),
+              );
+            }
+
+            const merged = mergeSelectChoices(
+              column.options?.choices ?? [],
+              choices,
+            );
+
+            if (!merged.added.length) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(
+                      {
+                        added: [],
+                        skipped: merged.skipped,
+                        field: column,
+                      },
+                      null,
+                      2,
+                    ),
+                  },
+                ],
+              };
+            }
+
+            const updated = await this.columnsV3Service.columnUpdate(context, {
+              req,
+              columnId,
+              column: {
+                type: column.type,
+                options: { choices: merged.choices },
+              },
+              user,
+            });
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    {
+                      added: merged.added,
+                      skipped: merged.skipped,
+                      field: updated,
+                    },
+                    null,
+                    2,
+                  ),
+                },
+              ],
+            };
+          } catch (error) {
+            return mcpErrorResult(error);
           }
         },
       );
