@@ -1033,15 +1033,16 @@ export class TablesService {
           source.type,
         );
 
-        if (uniqueColumnNameCount[column.column_name]) {
+        // sqlite, mysql and mssql treat column names case-insensitively
+        if (uniqueColumnNameCount[column.column_name.toLowerCase()]) {
           let suffix = 1;
           let targetColumnName = `${column.column_name}_${suffix++}`;
-          while (uniqueColumnNameCount[targetColumnName]) {
+          while (uniqueColumnNameCount[targetColumnName.toLowerCase()]) {
             targetColumnName = `${column.column_name}_${suffix++}`;
           }
           column.column_name = targetColumnName;
         }
-        uniqueColumnNameCount[column.column_name] = 1;
+        uniqueColumnNameCount[column.column_name.toLowerCase()] = 1;
 
         if (column.column_name.length > mxColumnLength) {
           column.column_name = column.column_name.slice(0, mxColumnLength);
