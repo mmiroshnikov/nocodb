@@ -87,7 +87,7 @@ export enum DriverClient {
 export const CHATWOOT_IDENTITY_KEY = process.env.CHATWOOT_IDENTITY_KEY;
 
 export const NC_DISABLE_SUPPORT_CHAT =
-  process.env.NC_DISABLE_SUPPORT_CHAT === 'true';
+  process.env.NC_DISABLE_SUPPORT_CHAT !== 'false';
 
 export const NC_IFRAME_WHITELIST_DOMAINS =
   process.env.NC_IFRAME_ALLOWED_DOMAINS ||

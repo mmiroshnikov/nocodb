@@ -156,114 +156,193 @@ function destroyMap() {
   }
 }
 
-// --- Geocoding search (Nominatim / OpenStreetMap) ---
-interface NominatimResult {
-  place_id: number
-  lat: string
-  lon: string
-  display_name: string
-  type: string
+// --- City search (GeoNames via OpenDataSoft public API) ---
+interface GeoNamesCity {
+  geoname_id: string
+  name: string
+  ascii_name: string | null
+  cou_name_en: string | null
+  country_code: string | null
+  population: number | null
+  coordinates: { lat: number; lon: number } | null
+}
+
+interface GeoNamesResponse {
+  total_count: number
+  results: GeoNamesCity[]
 }
 
 const searchQuery = ref('')
-const searchResults = ref<NominatimResult[]>([])
+const searchResults = ref<GeoNamesCity[]>([])
 const isSearching = ref(false)
 const showSearchResults = ref(false)
+const highlightedIndex = ref(-1)
 const searchInputRef = ref<HTMLInputElement>()
+const skipNextSearch = ref(false)
 
-const NOMINATIM_API = 'https://nominatim.openstreetmap.org/search'
+const GEONAMES_API =
+  'https://public.opendatasoft.com/api/explore/v2.1/catalog/datasets/geonames-all-cities-with-a-population-1000/records'
 
 let searchAbortController: AbortController | null = null
 let searchBlurTimer: ReturnType<typeof setTimeout> | null = null
 let copyTooltipTimer: ReturnType<typeof setTimeout> | null = null
 
+function escapeOdsqlString(value: string): string {
+  return value.replace(/["\\\n\r]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function cityLabel(city: GeoNamesCity): string {
+  return city.cou_name_en ? `${city.name}, ${city.cou_name_en}` : city.name
+}
+
+function formatPopulation(population: number | null): string {
+  if (!population) return ''
+  if (population >= 1_000_000) {
+    const millions = population / 1_000_000
+    return `${millions >= 10 ? millions.toFixed(0) : millions.toFixed(1)}M`
+  }
+  if (population >= 1_000) return `${Math.round(population / 1_000)}K`
+  return population.toLocaleString()
+}
+
 const performSearch = useDebounceFn(async () => {
-  const query = searchQuery.value.trim()
-  if (query.length < 3) {
+  const query = escapeOdsqlString(searchQuery.value)
+  if (query.length < 2) {
     searchResults.value = []
     showSearchResults.value = false
+    highlightedIndex.value = -1
     return
   }
 
-  // Abort any in-flight request
   searchAbortController?.abort()
   searchAbortController = new AbortController()
 
   isSearching.value = true
   try {
+    const isAsciiQuery = /^[\u0020-\u007E]+$/.test(query)
+    const clauses = [`suggest(name, "${query}")`, `suggest(ascii_name, "${query}")`]
+    // Full-text on alternate names is needed for non-Latin input ("Москва", "Усть-Каменогорск")
+    // but is too noisy for short Latin prefixes.
+    if (!isAsciiQuery) {
+      clauses.push(
+        `search(name, "${query}")`,
+        `search(ascii_name, "${query}")`,
+        `search(alternate_names, "${query}")`,
+      )
+    }
     const params = new URLSearchParams({
-      q: query,
-      format: 'json',
-      limit: '5',
-      addressdetails: '0',
+      where: clauses.join(' OR '),
+      order_by: 'population desc',
+      limit: '8',
+      select: 'geoname_id,name,ascii_name,cou_name_en,country_code,population,coordinates',
     })
 
-    const response = await fetch(`${NOMINATIM_API}?${params.toString()}`, {
-      headers: {
-        'Accept-Language': navigator.language || 'en',
-      },
+    const response = await fetch(`${GEONAMES_API}?${params.toString()}`, {
       signal: searchAbortController.signal,
     })
 
-    if (!response.ok) throw new Error('Geocoding request failed')
+    if (!response.ok) throw new Error('City search request failed')
 
-    const data: NominatimResult[] = await response.json()
-    searchResults.value = data
-    showSearchResults.value = data.length > 0
+    const data: GeoNamesResponse = await response.json()
+    const seen = new Set<string>()
+    searchResults.value = (data.results || []).filter((city) => {
+      if (!city?.geoname_id || seen.has(city.geoname_id)) return false
+      seen.add(city.geoname_id)
+      return true
+    })
+    showSearchResults.value = true
+    highlightedIndex.value = searchResults.value.length ? 0 : -1
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === 'AbortError') return
-    console.error('Geocoding error:', err)
+    console.error('City search error:', err)
     searchResults.value = []
-    showSearchResults.value = false
+    showSearchResults.value = true
+    highlightedIndex.value = -1
   } finally {
     isSearching.value = false
   }
-}, 400)
+}, 300)
 
-function selectSearchResult(result: NominatimResult) {
-  const lat = parseFloat(result.lat)
-  const lng = parseFloat(result.lon)
+function applyCityCoordinates(city: GeoNamesCity) {
+  const lat = city.coordinates?.lat
+  const lng = city.coordinates?.lon
+  if (typeof lat !== 'number' || typeof lng !== 'number') return
 
-  // Update form state
   syncToFormState(lat, lng)
-
-  // Update map
   updateMarkerPosition(lat, lng)
   mapInstanceRef.value?.setView([lat, lng], LOCATION_ZOOM)
+}
 
-  // Clear search
-  searchQuery.value = result.display_name
+function selectSearchResult(city: GeoNamesCity) {
+  applyCityCoordinates(city)
+  skipNextSearch.value = true
+  searchQuery.value = cityLabel(city)
   showSearchResults.value = false
+  highlightedIndex.value = -1
 }
 
 function onSearchKeydown(e: KeyboardEvent) {
-  // Prevent overlay from closing on Escape when search has results
   if (e.key === 'Escape' && showSearchResults.value) {
+    e.preventDefault()
     e.stopPropagation()
     showSearchResults.value = false
     return
   }
-  // Prevent form submission on Enter in search
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!searchResults.value.length) return
+    showSearchResults.value = true
+    highlightedIndex.value = (highlightedIndex.value + 1) % searchResults.value.length
+    return
+  }
+
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!searchResults.value.length) return
+    showSearchResults.value = true
+    highlightedIndex.value = highlightedIndex.value <= 0 ? searchResults.value.length - 1 : highlightedIndex.value - 1
+    return
+  }
+
   if (e.key === 'Enter') {
     e.preventDefault()
     e.stopPropagation()
+    const selected = searchResults.value[highlightedIndex.value]
+    if (selected && showSearchResults.value) {
+      selectSearchResult(selected)
+    }
   }
 }
 
 function onSearchBlur() {
-  // Delay hiding to allow click on result
   if (searchBlurTimer) clearTimeout(searchBlurTimer)
   searchBlurTimer = setTimeout(() => {
     showSearchResults.value = false
   }, 200)
 }
 
+function resetCitySearch() {
+  searchQuery.value = ''
+  searchResults.value = []
+  showSearchResults.value = false
+  highlightedIndex.value = -1
+  skipNextSearch.value = false
+}
+
 watch(searchQuery, () => {
-  if (searchQuery.value.trim().length >= 3) {
+  if (skipNextSearch.value) {
+    skipNextSearch.value = false
+    return
+  }
+  if (searchQuery.value.trim().length >= 2) {
     performSearch()
   } else {
     searchResults.value = []
     showSearchResults.value = false
+    highlightedIndex.value = -1
   }
 })
 
@@ -283,6 +362,7 @@ const syncMapFromInputs = useDebounceFn(() => {
 const identifier = {
   latitude: `nc-geo-lat-${Math.random().toString(36).substring(2, 10)}`,
   longitude: `nc-geo-lng-${Math.random().toString(36).substring(2, 10)}`,
+  citySearch: `nc-geo-city-${Math.random().toString(36).substring(2, 10)}`,
 }
 
 const isLocationSet = computed(() => {
@@ -522,9 +602,11 @@ watch(isExpanded, async (expanded) => {
     setTimeout(() => {
       initMap()
       mapInstanceRef.value?.invalidateSize()
+      searchInputRef.value?.focus()
     }, 150)
   } else {
     destroyMap()
+    resetCitySearch()
   }
 })
 
@@ -623,6 +705,68 @@ onBeforeUnmount(() => {
           <a-form :model="formState" class="nc-geodata-form" @finish="handleFinish">
             <!-- Modal content area -->
             <div class="nc-geodata-content">
+              <!-- City search -->
+              <div v-if="!readonly" class="nc-geodata-city-search">
+                <label class="nc-geodata-input-label" :for="identifier.citySearch">{{ $t('labels.city') }}</label>
+                <div class="nc-geodata-city-search-box">
+                  <GeneralIcon icon="search" class="nc-geodata-search-icon" />
+                  <input
+                    :id="identifier.citySearch"
+                    ref="searchInputRef"
+                    v-model="searchQuery"
+                    data-testid="nc-geo-data-city-search"
+                    type="text"
+                    class="nc-geodata-search-input"
+                    :placeholder="$t('labels.searchForCity')"
+                    autocomplete="off"
+                    role="combobox"
+                    :aria-expanded="showSearchResults"
+                    aria-autocomplete="list"
+                    aria-controls="nc-geo-search-results"
+                    :aria-activedescendant="
+                      highlightedIndex >= 0 ? `nc-geo-search-option-${highlightedIndex}` : undefined
+                    "
+                    @keydown="onSearchKeydown"
+                    @focus="showSearchResults = searchResults.length > 0"
+                    @blur="onSearchBlur"
+                    @keydown.stop
+                    @mousedown.stop
+                  />
+                  <GeneralIcon v-if="isSearching" icon="loading" class="nc-geodata-search-spinner animate-spin" />
+                </div>
+                <div
+                  v-if="showSearchResults"
+                  id="nc-geo-search-results"
+                  role="listbox"
+                  class="nc-geodata-search-results"
+                >
+                  <div
+                    v-for="(result, index) in searchResults"
+                    :id="`nc-geo-search-option-${index}`"
+                    :key="result.geoname_id"
+                    role="option"
+                    class="nc-geodata-search-result-item"
+                    :class="{ 'nc-geodata-search-result-item--active': index === highlightedIndex }"
+                    :aria-selected="index === highlightedIndex"
+                    @mousedown.prevent="selectSearchResult(result)"
+                    @mouseenter="highlightedIndex = index"
+                  >
+                    <GeneralIcon icon="ncMapPin" class="nc-geodata-result-icon" />
+                    <div class="nc-geodata-result-body">
+                      <span class="nc-geodata-result-name">{{ result.name }}</span>
+                      <span v-if="result.cou_name_en || result.population" class="nc-geodata-result-meta">
+                        <template v-if="result.cou_name_en">{{ result.cou_name_en }}</template>
+                        <template v-if="result.cou_name_en && result.population"> · </template>
+                        <template v-if="result.population">{{ formatPopulation(result.population) }}</template>
+                      </span>
+                    </div>
+                  </div>
+                  <div v-if="!isSearching && !searchResults.length" class="nc-geodata-search-empty">
+                    {{ $t('labels.noCitiesFound') }}
+                  </div>
+                </div>
+              </div>
+
               <!-- Coordinates section -->
               <div class="nc-geodata-section-label">{{ $t('labels.coordinates') }}</div>
               <div class="nc-geodata-coordinates-grid">
@@ -673,7 +817,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <!-- Map with integrated search & controls -->
+              <!-- Map with locate control -->
               <div class="nc-geodata-map-wrapper">
                 <div
                   ref="mapContainerRef"
@@ -682,42 +826,6 @@ onBeforeUnmount(() => {
                   role="application"
                   :aria-label="$t('labels.mapPicker')"
                 />
-
-                <!-- Search overlay on map -->
-                <div v-if="!readonly" class="nc-geodata-map-search">
-                  <div class="nc-geodata-search-input-row">
-                    <GeneralIcon icon="search" class="nc-geodata-search-icon" />
-                    <input
-                      ref="searchInputRef"
-                      v-model="searchQuery"
-                      data-testid="nc-geo-data-search"
-                      type="text"
-                      class="nc-geodata-search-input"
-                      :placeholder="$t('labels.searchForPlace')"
-                      role="combobox"
-                      :aria-expanded="showSearchResults"
-                      aria-autocomplete="list"
-                      aria-controls="nc-geo-search-results"
-                      @keydown="onSearchKeydown"
-                      @blur="onSearchBlur"
-                      @keydown.stop
-                      @mousedown.stop
-                    />
-                    <GeneralIcon v-if="isSearching" icon="loading" class="nc-geodata-search-spinner animate-spin" />
-                  </div>
-                  <div v-if="showSearchResults" id="nc-geo-search-results" role="listbox" class="nc-geodata-search-results">
-                    <div
-                      v-for="result in searchResults"
-                      :key="result.place_id"
-                      role="option"
-                      class="nc-geodata-search-result-item"
-                      @mousedown.prevent="selectSearchResult(result)"
-                    >
-                      <GeneralIcon icon="ncMapPin" class="nc-geodata-result-icon" />
-                      <span class="nc-geodata-result-text">{{ result.display_name }}</span>
-                    </div>
-                  </div>
-                </div>
 
                 <!-- Current location button -->
                 <div v-if="!readonly" class="nc-geodata-locate-wrapper">
@@ -848,6 +956,89 @@ onBeforeUnmount(() => {
   @apply text-nc-content-gray-subtle text-xs font-semibold uppercase tracking-wide mb-1;
 }
 
+/* City search */
+.nc-geodata-city-search {
+  @apply relative flex flex-col gap-1.5;
+}
+
+.nc-geodata-city-search-box {
+  @apply flex items-center rounded-lg border-1 border-nc-border-gray-medium bg-nc-bg-default;
+  padding: 0 12px;
+  height: 36px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &:focus-within {
+    @apply border-nc-border-brand;
+    box-shadow: 0 0 0 2px rgba(51, 102, 255, 0.12);
+  }
+}
+
+.nc-geodata-search-icon {
+  @apply text-nc-content-gray-muted w-4 h-4 flex-shrink-0;
+}
+
+.nc-geodata-search-spinner {
+  @apply text-nc-content-gray-muted w-3.5 h-3.5 flex-shrink-0;
+}
+
+.nc-geodata-search-input {
+  @apply flex-1 border-none outline-none text-nc-content-gray bg-transparent min-w-0;
+  font-size: 13px;
+  padding: 0 8px;
+
+  &::placeholder {
+    @apply text-nc-content-gray-muted;
+  }
+}
+
+.nc-geodata-search-results {
+  @apply bg-nc-bg-default rounded-lg border-1 border-nc-border-gray-medium;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.nc-geodata-search-result-item {
+  @apply flex items-start gap-2 px-3 py-2 cursor-pointer;
+  transition: background 0.15s;
+
+  &:hover,
+  &--active {
+    @apply bg-nc-bg-gray-light;
+  }
+
+  &:first-child {
+    border-radius: 8px 8px 0 0;
+  }
+
+  &:last-child {
+    border-radius: 0 0 8px 8px;
+  }
+
+  &:only-child {
+    border-radius: 8px;
+  }
+}
+
+.nc-geodata-result-icon {
+  @apply text-nc-content-gray-muted w-3.5 h-3.5 flex-shrink-0 mt-0.5;
+}
+
+.nc-geodata-result-body {
+  @apply flex flex-col min-w-0 gap-0.5;
+}
+
+.nc-geodata-result-name {
+  @apply text-nc-content-gray text-sm leading-[1.3] truncate;
+}
+
+.nc-geodata-result-meta {
+  @apply text-nc-content-gray-muted text-xs leading-[1.3] truncate;
+}
+
+.nc-geodata-search-empty {
+  @apply px-3 py-2.5 text-nc-content-gray-muted text-xs;
+}
+
 /* Two-column coordinates grid */
 .nc-geodata-coordinates-grid {
   @apply grid grid-cols-2 gap-4;
@@ -871,87 +1062,6 @@ onBeforeUnmount(() => {
 
 .nc-geodata-error-text {
   @apply text-nc-content-red-dark text-xs;
-}
-
-/* Search overlay on map */
-.nc-geodata-map-search {
-  @apply absolute;
-  top: 12px;
-  left: 12px;
-  right: 56px; /* leave room for the locate button + gap */
-  z-index: 1000;
-}
-
-.nc-geodata-search-input-row {
-  @apply flex items-center rounded-lg bg-nc-bg-default;
-  padding: 0 12px;
-  height: 36px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
-  transition: box-shadow 0.2s;
-
-  &:focus-within {
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
-  }
-}
-
-.nc-geodata-search-icon {
-  @apply text-nc-content-gray-muted w-4 h-4 flex-shrink-0;
-}
-
-.nc-geodata-search-spinner {
-  @apply text-nc-content-gray-muted w-3.5 h-3.5 flex-shrink-0;
-}
-
-.nc-geodata-search-input {
-  @apply flex-1 border-none outline-none text-nc-content-gray bg-transparent min-w-0;
-  font-size: 13px;
-  padding: 0 8px;
-
-  &::placeholder {
-    @apply text-nc-content-gray-muted;
-  }
-}
-
-.nc-geodata-search-results {
-  @apply bg-nc-bg-default rounded-lg;
-  margin-top: 4px;
-  max-height: 180px;
-  overflow-y: auto;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-
-.nc-geodata-search-result-item {
-  @apply flex items-start gap-2 px-3 py-2 cursor-pointer;
-  transition: background 0.15s;
-
-  &:hover {
-    @apply bg-nc-bg-gray-light;
-  }
-
-  &:first-child {
-    border-radius: 8px 8px 0 0;
-  }
-
-  &:last-child {
-    border-radius: 0 0 8px 8px;
-  }
-
-  &:only-child {
-    border-radius: 8px;
-  }
-}
-
-.nc-geodata-result-icon {
-  @apply text-nc-content-gray-muted w-3.5 h-3.5 flex-shrink-0 mt-0.5;
-}
-
-.nc-geodata-result-text {
-  @apply text-nc-content-gray text-xs leading-[1.4];
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 
 /* Map wrapper (relative container for overlay controls) */
