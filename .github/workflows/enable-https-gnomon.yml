@@ -1,0 +1,233 @@
+name: Enable HTTPS for db.gnomon.edu
+
+on:
+  workflow_dispatch:
+
+jobs:
+  https:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Prepare SSH
+        env:
+          AWS_SSH_PRIVATE_KEY: ${{ secrets.AWS_SSH_PRIVATE_KEY }}
+          AWS_HOST: ${{ vars.AWS_HOST }}
+        run: |
+          test -n "$AWS_SSH_PRIVATE_KEY" || { echo "Missing secret AWS_SSH_PRIVATE_KEY"; exit 1; }
+          HOST="${AWS_HOST:-44.212.220.187}"
+          echo "AWS_HOST=$HOST" >> "$GITHUB_ENV"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AWS_SSH_PRIVATE_KEY" > ~/.ssh/aws_nocodb_ce
+          chmod 600 ~/.ssh/aws_nocodb_ce
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Issue certificate and publish HTTPS URL
+        run: |
+          ssh -i ~/.ssh/aws_nocodb_ce -o StrictHostKeyChecking=yes "ubuntu@${AWS_HOST}" "bash -s" << 'REMOTE'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          echo "==> listeners"
+          sudo ss -ltnp | grep -E ':80|:443|:18080' || true
+          echo "==> nginx files proxying to NocoDB"
+          sudo grep -R -n "18080" /etc/nginx || true
+
+          echo "==> install certbot"
+          sudo apt-get update
+          sudo apt-get install -y certbot python3-certbot-nginx
+
+          echo "==> server_name and proxy headers before certbot"
+          sudo python3 - << 'PY'
+          from pathlib import Path
+          NEED = [
+              "proxy_set_header Host $host;",
+              "proxy_set_header X-Forwarded-Proto $scheme;",
+              "proxy_set_header Upgrade $http_upgrade;",
+              'proxy_set_header Connection "upgrade";',
+          ]
+          files = [
+              p for p in Path("/etc/nginx").rglob("*")
+              if p.is_file() and "proxy_pass http://127.0.0.1:18080;" in p.read_text(errors="ignore")
+          ]
+          if not files:
+              raise SystemExit("no nginx file proxies to 127.0.0.1:18080")
+          for path in files:
+              original = path.read_text()
+              text = original.replace("server_name _;", "server_name db.gnomon.edu;")
+              if "db.gnomon.edu" not in text and "server_name " in text:
+                  text = text.replace("server_name ", "server_name db.gnomon.edu ", 1)
+              lines = text.splitlines(keepends=True)
+              out = []
+              for index, line in enumerate(lines):
+                  out.append(line)
+                  if "proxy_pass http://127.0.0.1:18080;" not in line:
+                      continue
+                  window = "".join(lines[index:index + 25])
+                  for directive in NEED:
+                      if directive not in window:
+                          out.append(f"        {directive}\n")
+              updated = "".join(out)
+              if updated != original:
+                  path.write_text(updated)
+                  print(f"updated {path}")
+              else:
+                  print(f"unchanged {path}")
+          PY
+
+          sudo nginx -t
+          sudo systemctl reload nginx
+
+          echo "==> certbot"
+          sudo certbot --nginx -d db.gnomon.edu \
+            --non-interactive \
+            --agree-tos \
+            --email misha.miroshnikov@gnomon.edu \
+            --no-eff-email \
+            --redirect \
+            --keep-until-expiring
+
+          echo "==> re-check proxy headers after certbot"
+          sudo python3 - << 'PY'
+          from pathlib import Path
+          NEED = [
+              "proxy_set_header Host $host;",
+              "proxy_set_header X-Forwarded-Proto $scheme;",
+              "proxy_set_header Upgrade $http_upgrade;",
+              'proxy_set_header Connection "upgrade";',
+          ]
+          files = [
+              p for p in Path("/etc/nginx").rglob("*")
+              if p.is_file() and "proxy_pass http://127.0.0.1:18080;" in p.read_text(errors="ignore")
+          ]
+          if not files:
+              raise SystemExit("proxy to 18080 disappeared after certbot")
+          for path in files:
+              original = path.read_text()
+              lines = original.splitlines(keepends=True)
+              out = []
+              for index, line in enumerate(lines):
+                  out.append(line)
+                  if "proxy_pass http://127.0.0.1:18080;" not in line:
+                      continue
+                  window = "".join(lines[index:index + 25])
+                  for directive in NEED:
+                      if directive not in window:
+                          out.append(f"        {directive}\n")
+              updated = "".join(out)
+              if updated != original:
+                  path.write_text(updated)
+                  print(f"updated {path}")
+              else:
+                  print(f"unchanged {path}")
+          PY
+          sudo nginx -t
+          sudo systemctl reload nginx
+
+          echo "==> nginx ssl config"
+          config="$(sudo nginx -T 2>/dev/null)"
+          printf '%s\n' "$config" | grep -n -E 'listen .*443|server_name|ssl_certificate |proxy_set_header (Host|X-Forwarded-Proto|Upgrade|Connection)|return 301' || true
+          for needle in \
+            'listen 443' \
+            'ssl_certificate ' \
+            'proxy_set_header Host $host;' \
+            'proxy_set_header X-Forwarded-Proto $scheme;' \
+            'proxy_set_header Upgrade $http_upgrade;' \
+            'proxy_set_header Connection "upgrade";'
+          do
+            printf '%s\n' "$config" | grep -F -q "$needle" || { echo "missing: $needle"; exit 1; }
+          done
+
+          echo "==> timer"
+          systemctl is-enabled certbot.timer || systemctl is-enabled snap.certbot.renew.timer
+
+          echo "==> containers"
+          sudo docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+
+          echo "==> set NC_PUBLIC_URL and recreate nocodb-ce"
+          if [ -f /opt/nocodb-ce/env ]; then
+            if sudo grep -q '^NC_PUBLIC_URL=' /opt/nocodb-ce/env; then
+              sudo sed -i 's|^NC_PUBLIC_URL=.*|NC_PUBLIC_URL=https://db.gnomon.edu|' /opt/nocodb-ce/env
+            else
+              echo 'NC_PUBLIC_URL=https://db.gnomon.edu' | sudo tee -a /opt/nocodb-ce/env >/dev/null
+            fi
+            sudo chmod 600 /opt/nocodb-ce/env
+          fi
+
+          sudo python3 - << 'PY'
+          import json, subprocess, sys
+          name = "nocodb-ce"
+          try:
+              raw = subprocess.check_output(["sudo", "docker", "inspect", name])
+          except subprocess.CalledProcessError:
+              print("container nocodb-ce is not present", file=sys.stderr)
+              sys.exit(1)
+          container = json.loads(raw)[0]
+          binds = container["HostConfig"].get("Binds") or []
+          ports = container["HostConfig"].get("PortBindings") or {}
+          image = container["Config"]["Image"]
+          restart = (container["HostConfig"].get("RestartPolicy") or {}).get("Name") or "unless-stopped"
+          print("image", image)
+          print("binds", binds)
+          print("ports", ports)
+          print("restart", restart)
+          if not any("/opt/nocodb-ce/data" in b for b in binds):
+              print("refusing: data volume is not /opt/nocodb-ce/data", file=sys.stderr)
+              sys.exit(1)
+          binding = (ports.get("8080/tcp") or [None])[0] or {}
+          if binding.get("HostIp") != "127.0.0.1" or binding.get("HostPort") != "18080":
+              print("refusing: expected 127.0.0.1:18080->8080", file=sys.stderr)
+              sys.exit(1)
+          env = [
+              item for item in (container["Config"].get("Env") or [])
+              if item.startswith("NC_") and not item.startswith("NC_PUBLIC_URL=")
+          ]
+          env.append("NC_PUBLIC_URL=https://db.gnomon.edu")
+          run = [
+              "sudo", "docker", "run", "-d",
+              "--name", name,
+              "--restart", restart,
+          ]
+          for bind in binds:
+              run.extend(["-v", bind])
+          run.extend(["-p", "127.0.0.1:18080:8080"])
+          for item in env:
+              run.extend(["-e", item])
+          run.append(image)
+
+          subprocess.check_call(["sudo", "docker", "stop", name])
+          subprocess.check_call(["sudo", "docker", "rename", name, name + "-old"])
+          try:
+              subprocess.check_call(run)
+          except subprocess.CalledProcessError as exc:
+              subprocess.call(["sudo", "docker", "rename", name + "-old", name])
+              subprocess.call(["sudo", "docker", "start", name])
+              print(f"docker run failed with exit {exc.returncode}", file=sys.stderr)
+              sys.exit(exc.returncode or 1)
+          subprocess.check_call(["sudo", "docker", "rm", "-f", name + "-old"])
+          url = subprocess.check_output(["sudo", "docker", "exec", name, "printenv", "NC_PUBLIC_URL"], text=True).strip()
+          print("NC_PUBLIC_URL", url)
+          if url != "https://db.gnomon.edu":
+              sys.exit(1)
+          PY
+
+          echo "==> wait for local health"
+          ok=0
+          for i in $(seq 1 30); do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:18080/api/v1/health || echo fail)"
+            echo "health $i $code"
+            if [ "$code" = "200" ]; then
+              ok=1
+              break
+            fi
+            sleep 4
+          done
+          [ "$ok" = "1" ]
+
+          echo "==> https from the host"
+          curl -fsS --max-time 20 https://db.gnomon.edu/api/v1/health
+          echo
+          curl -sI --max-time 20 http://db.gnomon.edu/api/v1/health | head -n 15
+          REMOTE
