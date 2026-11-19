@@ -172,14 +172,12 @@ export class UsersService {
         evt_type: 'base:invite',
         count: 1,
       });
+    } else if (!isFirstUser && !is_invite && !workspace_invite) {
+      // Open signup is closed. After the first super admin, a new account
+      // exists only when an admin invite already created the user row.
+      NcError.badRequest('Not allowed to signup, contact super admin.');
     } else {
-      const settings = await Noco.getAppSettings();
-
-      if (settings?.invite_only_signup && !is_invite && !workspace_invite) {
-        NcError.badRequest('Not allowed to signup, contact super admin.');
-      } else {
-        roles = OrgUserRoles.VIEWER;
-      }
+      roles = OrgUserRoles.VIEWER;
     }
 
     const token_version = randomTokenString();
@@ -539,18 +537,17 @@ export class UsersService {
       (await User.getByCanonicalEmail(email)) || (await User.getByEmail(email));
 
     if (user) {
-      if (token) {
-        if (token !== user.invite_token) {
-          NcError.badRequest(`Invalid invite url`);
-        } else if (user.invite_token_expires < new Date()) {
-          NcError.badRequest(
-            'Expired invite url, Please contact super admin to get a new invite url',
-          );
-        }
-      } else {
-        // todo : opening up signup for timebeing
-        // return next(new Error(`Email '${email}' already registered`));
+      // Password can be set only with the invite token an admin issued.
+      // A request without that token must not create or overwrite an account.
+      if (!token || token !== user.invite_token) {
+        NcError.badRequest(token ? 'Invalid invite url' : 'User already exist');
+      } else if (user.invite_token_expires < new Date()) {
+        NcError.badRequest(
+          'Expired invite url, Please contact super admin to get a new invite url',
+        );
       }
+    } else if (!(await User.isFirst())) {
+      NcError.badRequest('Not allowed to signup, contact super admin.');
     }
 
     const salt = await promisify(bcrypt.genSalt)(10);

@@ -4,14 +4,17 @@ const { api } = useApi()
 const { t } = useI18n()
 
 const settings = ref<{ invite_only_signup?: boolean; restrict_workspace_creation?: boolean }>({
-  invite_only_signup: false,
+  invite_only_signup: true,
   restrict_workspace_creation: false,
 })
 
 const loadSettings = async () => {
   try {
     const response = await api.orgAppSettings.get()
-    settings.value = response
+    settings.value = {
+      ...response,
+      invite_only_signup: true,
+    }
   } catch (e: any) {
     message.error(await extractSdkResponseErrorMsg(e))
   }
@@ -56,14 +59,9 @@ loadSettings()
       <div class="flex flex-col gap-6 w-150">
         <span class="font-bold text-xl" data-rec="true">{{ $t('general.general') }}</span>
         <div class="flex flex-col border-1 rounded-2xl border-nc-border-gray-medium p-6 gap-y-4">
-          <label class="flex items-center gap-3 cursor-pointer">
-            <NcCheckbox
-              v-model:checked="settings.invite_only_signup"
-              v-e="['c:account:enable-signup']"
-              :disabled="settings.restrict_workspace_creation"
-              @change="saveSettings"
-            />
-            <span data-rec="true" :class="{ 'text-nc-content-gray-muted': settings.restrict_workspace_creation }">
+          <label class="flex items-center gap-3">
+            <NcCheckbox :checked="true" disabled />
+            <span data-rec="true" class="text-nc-content-gray-muted">
               {{ $t('labels.inviteOnlySignup') }}
             </span>
           </label>

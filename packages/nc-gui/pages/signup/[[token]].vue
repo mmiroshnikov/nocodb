@@ -10,7 +10,7 @@ const { $e } = useNuxtApp()
 
 const route = useRoute()
 
-const { appInfo, signIn } = useGlobal()
+const { appInfo, appInfoStatus, signIn } = useGlobal()
 
 const { api, isLoading, error } = useApi({ useGlobalInstance: true })
 
@@ -131,6 +131,30 @@ function navigateSignIn() {
   })
 }
 
+const inviteToken = computed(() => {
+  const token = route.params.token
+  return Array.isArray(token) ? token[0] : token
+})
+
+const canSignUp = computed(
+  () => !!inviteToken.value || (appInfoStatus.value === 'loaded' && !!appInfo.value?.firstUser),
+)
+
+watch(
+  [canSignUp, appInfoStatus, inviteToken],
+  async () => {
+    if (inviteToken.value) return
+    if (appInfoStatus.value === 'idle' || appInfoStatus.value === 'loading') return
+    if (!canSignUp.value) {
+      await navigateTo({
+        path: '/signin',
+        query: route.query,
+      })
+    }
+  },
+  { immediate: true },
+)
+
 onMounted(async () => {
   await clearWorkspaces()
 })
@@ -155,7 +179,7 @@ onMounted(async () => {
             {{ $t('msg.info.signUp.superAdmin') }}
           </h2>
 
-          <a-form ref="formValidator" :model="form" layout="vertical" no-style @finish="signUp">
+          <a-form v-if="canSignUp" ref="formValidator" :model="form" layout="vertical" no-style @finish="signUp">
             <template v-if="!appInfo.disableEmailAuth">
               <Transition name="layout">
                 <div

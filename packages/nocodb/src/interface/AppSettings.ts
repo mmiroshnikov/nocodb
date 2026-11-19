@@ -3,9 +3,9 @@
  */
 export interface AppSettings {
   /**
-   * When true, only users with invite tokens can sign up
-   * Prevents open registration
-   * @default false
+   * Open signup is disabled. Only an admin invite link can create an account
+   * after the first super admin. The stored value is forced to true.
+   * @default true
    */
   invite_only_signup?: boolean;
 
@@ -20,6 +20,6 @@ export interface AppSettings {
  * Default values for app settings
  */
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  invite_only_signup: false,
+  invite_only_signup: true,
   restrict_workspace_creation: false,
 };

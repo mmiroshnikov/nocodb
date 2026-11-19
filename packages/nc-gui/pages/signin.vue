@@ -8,7 +8,7 @@ definePageMeta({
 
 const route = useRoute()
 
-const { signIn: _signIn, appInfo } = useGlobal()
+const { signIn: _signIn, appInfo, appInfoStatus } = useGlobal()
 
 const { api, isLoading, error } = useApi({ useGlobalInstance: true })
 
@@ -62,13 +62,6 @@ async function signIn() {
 
 function resetError() {
   if (error.value) error.value = null
-}
-
-function navigateSignUp() {
-  navigateTo({
-    path: '/signup',
-    query: route.query,
-  })
 }
 
 function navigateForgotPassword() {
@@ -176,9 +169,17 @@ function navigateForgotPassword() {
                 </a>
               </div>
 
-              <div v-if="!appInfo.inviteOnlySignup" class="text-end prose-sm">
+              <div v-if="appInfoStatus === 'loaded' && appInfo.firstUser" class="text-end prose-sm">
                 {{ $t('msg.info.signUp.dontHaveAccount') }}
-                <nuxt-link @click="navigateSignUp">{{ $t('general.signUp') }}</nuxt-link>
+                <nuxt-link
+                  @click="
+                    navigateTo({
+                      path: '/signup',
+                      query: route.query,
+                    })
+                  "
+                  >{{ $t('general.signUp') }}</nuxt-link
+                >
               </div>
               <template v-if="!appInfo.disableEmailAuth">
                 <div class="md:hidden">

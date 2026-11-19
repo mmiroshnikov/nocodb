@@ -347,6 +347,7 @@ export default class Noco {
         this._appSettings = {
           ...DEFAULT_APP_SETTINGS,
           ...JSON.parse(storeData.value),
+          invite_only_signup: true,
         };
       } else {
         this._appSettings = { ...DEFAULT_APP_SETTINGS };
@@ -365,6 +366,7 @@ export default class Noco {
     const newSettings = {
       ...currentSettings,
       ...settings,
+      invite_only_signup: true,
     };
 
     await Store.saveOrUpdate(

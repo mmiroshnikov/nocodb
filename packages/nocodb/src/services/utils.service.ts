@@ -494,7 +494,7 @@ export class UtilsService {
       feedEnabled: process.env.NC_DISABLE_PRODUCT_FEED !== 'true',
       mainSubDomain: this.configService.get('mainSubDomain', { infer: true }),
       dashboardPath: this.configService.get('dashboardPath', { infer: true }),
-      inviteOnlySignup: settings.invite_only_signup,
+      inviteOnlySignup: true,
       restrictWorkspaceCreation: settings.restrict_workspace_creation,
       samlProviderName,
       samlAuthEnabled,
